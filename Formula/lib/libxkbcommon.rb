@@ -1,8 +1,8 @@
 class Libxkbcommon < Formula
   desc "Keyboard handling library"
   homepage "https://xkbcommon.org/"
-  url "https://xkbcommon.org/download/libxkbcommon-1.5.0.tar.xz"
-  sha256 "560f11c4bbbca10f495f3ef7d3a6aa4ca62b4f8fb0b52e7d459d18a26e46e017"
+  url "https://xkbcommon.org/download/libxkbcommon-1.6.0.tar.xz"
+  sha256 "0edc14eccdd391514458bc5f5a4b99863ed2d651e4dd761a90abf4f46ef99c2b"
   license "MIT"
   head "https://github.com/xkbcommon/libxkbcommon.git", branch: "master"
 
@@ -33,9 +33,13 @@ class Libxkbcommon < Formula
 
   uses_from_macos "libxml2"
 
+  # upstream patch PR, https://github.com/xkbcommon/libxkbcommon/pull/468
+  patch :DATA
+
   def install
     args = %W[
       -Denable-wayland=false
+      -Denable-x11=false
       -Denable-docs=false
       -Dxkb-config-root=#{HOMEBREW_PREFIX}/share/X11/xkb
       -Dx-locale-root=#{HOMEBREW_PREFIX}/share/X11/locale
@@ -60,3 +64,72 @@ class Libxkbcommon < Formula
     system "./test"
   end
 end
+
+__END__
+diff --git a/test/xvfb-wrapper.c b/test/xvfb-wrapper.c
+index 38d159b..1b0d797 100644
+--- a/test/xvfb-wrapper.c
++++ b/test/xvfb-wrapper.c
+@@ -133,25 +133,25 @@ err_display_fd:
+     return ret;
+ }
+
+-/* All X11_TEST functions are in the test_functions_section ELF section.
++/* All X11_TEST functions are in the test_func_sec ELF section.
+  * __start and __stop point to the start and end of that section. See the
+  * __attribute__(section) documentation.
+  */
+-extern const struct test_function __start_test_functions_section, __stop_test_functions_section;
++extern const struct test_function __start_test_func_sec, __stop_test_func_sec;
+
+ int
+ x11_tests_run()
+ {
+     size_t count = 1; /* For NULL-terminated entry */
+
+-    for (const struct test_function *t = &__start_test_functions_section;
+-         t < &__stop_test_functions_section;
++    for (const struct test_function *t = &__start_test_func_sec;
++         t < &__stop_test_func_sec;
+          t++)
+         count++;
+
+     int rc;
+-    for (const struct test_function *t = &__start_test_functions_section;
+-         t < &__stop_test_functions_section;
++    for (const struct test_function *t = &__start_test_func_sec;
++         t < &__stop_test_func_sec;
+          t++) {
+         fprintf(stderr, "Running test: %s from %s\n", t->name, t->file);
+         rc = xvfb_wrapper(t->func);
+diff --git a/test/xvfb-wrapper.h b/test/xvfb-wrapper.h
+index 222fa3e..d0ad5c5 100644
+--- a/test/xvfb-wrapper.h
++++ b/test/xvfb-wrapper.h
+@@ -23,6 +23,16 @@ struct test_function {
+     x11_test_func_t func; /* test function */
+ } __attribute__((aligned(16)));
+
++#if defined(__APPLE__) && defined(__MACH__)
++#define SET_CUSTOM_ELF_SECTION \
++    __attribute__((retain,used)) \
++    __attribute__((section("__TEXT,test_func_sec")))
++#else
++#define SET_CUSTOM_ELF_SECTION \
++    __attribute__((retain,used)) \
++    __attribute__((section("test_func_sec")))
++#endif
++
+ /**
+  * Defines a struct test_function in a custom ELF section that we can then
+  * loop over in x11_tests_run() to extract the tests. This removes the
+@@ -31,8 +41,7 @@ struct test_function {
+ #define X11_TEST(_func) \
+ static int _func(char* display); \
+ static const struct test_function _test_##_func \
+-__attribute__((used)) \
+-__attribute__((section("test_functions_section"))) = { \
++SET_CUSTOM_ELF_SECTION = { \
+     .name = #_func, \
+     .func = _func, \
+     .file = __FILE__, \
